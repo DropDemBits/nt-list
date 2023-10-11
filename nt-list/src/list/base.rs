@@ -61,7 +61,7 @@ where
     /// After this operation, `other` becomes empty.
     ///
     /// This operation computes in *O*(*1*) time.
-    pub unsafe fn append(self: Pin<&mut Self>, other: Pin<&mut Self>) {
+    pub unsafe fn append(mut self: Pin<&mut Self>, other: Pin<&mut Self>) {
         if other.as_ref().is_empty() {
             return;
         }
@@ -73,14 +73,11 @@ where
         // - The last element of `self` shall be changed to the last element of `other`.
         (*self.blink).flink = other.flink;
         (*other.flink).blink = self.blink;
-        (*other.blink).flink = self.as_ref().end_marker();
+        (*other.blink).flink = self.as_mut().end_marker_mut();
         self.get_unchecked_mut().blink = other.blink;
 
         // Clear `other` without touching any of its elements.
-        let other_end_marker = other.as_ref().end_marker();
-        let other_mut = other.get_unchecked_mut();
-        other_mut.flink = other_end_marker;
-        other_mut.blink = other_end_marker;
+        other.clear();
     }
 
     /// Provides a reference to the last element, or `None` if the list is empty.
@@ -101,17 +98,22 @@ where
     ///
     /// This operation computes in *O*(*1*) time, because it only resets the forward and
     /// backward links of the header.
-    pub fn clear(self: Pin<&mut Self>) {
-        let end_marker = self.as_ref().end_marker();
+    pub fn clear(mut self: Pin<&mut Self>) {
+        let end_marker = self.as_mut().end_marker_mut();
         let self_mut = unsafe { self.get_unchecked_mut() };
 
         self_mut.flink = end_marker;
         self_mut.blink = end_marker;
     }
 
-    /// Returns the "end marker element" (which is the address of our own `NtListHead`, but interpreted as a `NtListEntry` element address).
-    pub(crate) fn end_marker(self: Pin<&Self>) -> *mut NtListEntry<E, L> {
+    /// Returns a const pointer to the "end marker element" (which is the address of our own `NtListHead`, but interpreted as a `NtListEntry` element address).
+    pub(crate) fn end_marker(self: Pin<&Self>) -> *const NtListEntry<E, L> {
         (self.get_ref() as *const _ as *mut Self).cast()
+    }
+
+    /// Returns a mutable pointer to the "end marker element" (which is the address of our own `NtListHead`, but interpreted as a `NtListEntry` element address).
+    pub(crate) fn end_marker_mut(self: Pin<&mut Self>) -> *mut NtListEntry<E, L> {
+        (unsafe { self.get_unchecked_mut() } as *mut Self).cast()
     }
 
     /// Returns the [`NtListEntry`] for the given element.
@@ -151,7 +153,7 @@ where
 
     /// Returns an iterator yielding references to each element of the list.
     pub unsafe fn iter(self: Pin<&Self>) -> Iter<E, L> {
-        let head = self.get_ref();
+        let head = self;
         let flink = head.flink;
         let blink = head.blink;
 
@@ -160,7 +162,7 @@ where
 
     /// Returns an iterator yielding mutable references to each element of the list.
     pub unsafe fn iter_mut(self: Pin<&mut Self>) -> IterMut<E, L> {
-        let head = self.get_unchecked_mut();
+        let head = self;
         let flink = head.flink;
         let blink = head.blink;
 
@@ -211,11 +213,11 @@ where
     /// This operation computes in *O*(*1*) time.
     ///
     /// [`InsertTailList`]: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-inserttaillist
-    pub unsafe fn push_back(self: Pin<&mut Self>, element: &mut E) {
+    pub unsafe fn push_back(mut self: Pin<&mut Self>, element: &mut E) {
         let entry = Self::entry(element);
 
         let old_blink = self.blink;
-        (*entry).flink = self.as_ref().end_marker();
+        (*entry).flink = self.as_mut().end_marker_mut();
         (*entry).blink = old_blink;
         (*old_blink).flink = entry;
         self.get_unchecked_mut().blink = entry;
@@ -228,12 +230,12 @@ where
     /// This operation computes in *O*(*1*) time.
     ///
     /// [`InsertHeadList`]: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-insertheadlist
-    pub unsafe fn push_front(self: Pin<&mut Self>, element: &mut E) {
+    pub unsafe fn push_front(mut self: Pin<&mut Self>, element: &mut E) {
         let entry = Self::entry(element);
 
         let old_flink = self.flink;
         (*entry).flink = old_flink;
-        (*entry).blink = self.as_ref().end_marker();
+        (*entry).blink = self.as_mut().end_marker_mut();
         (*old_flink).blink = entry;
         self.get_unchecked_mut().flink = entry;
     }
@@ -268,7 +270,7 @@ where
 ///
 /// [`NtBoxingListHead::iter`]: crate::list::NtBoxingListHead::iter
 pub struct Iter<'a, E: NtListElement<L>, L: NtTypedList<T = NtList>> {
-    head: &'a NtListHead<E, L>,
+    head: Pin<&'a NtListHead<E, L>>,
     flink: *const NtListEntry<E, L>,
     blink: *const NtListEntry<E, L>,
 }
@@ -279,7 +281,7 @@ where
     L: NtTypedList<T = NtList>,
 {
     fn terminate(&mut self) {
-        self.flink = (self.head as *const NtListHead<E, L>).cast();
+        self.flink = self.head.end_marker();
         self.blink = self.flink;
     }
 }
@@ -292,7 +294,7 @@ where
     type Item = &'a E;
 
     fn next(&mut self) -> Option<&'a E> {
-        if self.flink == (self.head as *const NtListHead<_, _>).cast() {
+        if self.flink == self.head.end_marker() {
             None
         } else {
             unsafe {
@@ -321,7 +323,7 @@ where
     L: NtTypedList<T = NtList>,
 {
     fn next_back(&mut self) -> Option<&'a E> {
-        if self.blink == (self.head as *const NtListHead<_, _>).cast() {
+        if self.blink == self.head.end_marker() {
             None
         } else {
             unsafe {
@@ -353,7 +355,7 @@ where
 ///
 /// [`NtBoxingListHead::iter_mut`]: crate::list::NtBoxingListHead::iter_mut
 pub struct IterMut<'a, E: NtListElement<L>, L: NtTypedList<T = NtList>> {
-    head: &'a mut NtListHead<E, L>,
+    head: Pin<&'a mut NtListHead<E, L>>,
     flink: *mut NtListEntry<E, L>,
     blink: *mut NtListEntry<E, L>,
 }
@@ -364,7 +366,7 @@ where
     L: NtTypedList<T = NtList>,
 {
     fn terminate(&mut self) {
-        self.flink = (self.head as *mut NtListHead<E, L>).cast();
+        self.flink = self.head.as_mut().end_marker_mut();
         self.blink = self.flink;
     }
 }
@@ -377,7 +379,7 @@ where
     type Item = &'a mut E;
 
     fn next(&mut self) -> Option<&'a mut E> {
-        if self.flink == (self.head as *mut NtListHead<_, _>).cast() {
+        if self.flink == self.head.as_mut().end_marker_mut() {
             None
         } else {
             unsafe {
@@ -406,7 +408,7 @@ where
     L: NtTypedList<T = NtList>,
 {
     fn next_back(&mut self) -> Option<&'a mut E> {
-        if self.blink == (self.head as *mut NtListHead<_, _>).cast() {
+        if self.blink == self.head.as_mut().end_marker_mut() {
             None
         } else {
             unsafe {
