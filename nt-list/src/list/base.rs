@@ -48,11 +48,7 @@ where
             blink: ptr::null_mut(),
             pin: PhantomPinned,
         })
-        .with(|this| {
-            let this = unsafe { this.get_unchecked_mut() };
-            this.flink = (this as *mut Self).cast();
-            this.blink = this.flink;
-        })
+        .with(|this| this.clear())
     }
 
     /// Moves all elements from `other` to the end of the list.
