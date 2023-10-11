@@ -87,14 +87,14 @@ where
     ///
     /// This operation computes in *O*(*1*) time.
     pub unsafe fn back(self: Pin<&Self>) -> Option<&E> {
-        (!self.is_empty()).then(|| (*self.blink).containing_record())
+        (!self.is_empty()).then(|| NtListEntry::containing_record(self.blink))
     }
 
     /// Provides a mutable reference to the last element, or `None` if the list is empty.
     ///
     /// This operation computes in *O*(*1*) time.
     pub unsafe fn back_mut(self: Pin<&mut Self>) -> Option<&mut E> {
-        (!self.as_ref().is_empty()).then(|| (*self.blink).containing_record_mut())
+        (!self.as_ref().is_empty()).then(|| NtListEntry::containing_record_mut(self.blink))
     }
 
     /// Removes all elements from the list.
@@ -128,14 +128,14 @@ where
     ///
     /// This operation computes in *O*(*1*) time.
     pub unsafe fn front(self: Pin<&Self>) -> Option<&E> {
-        (!self.is_empty()).then(|| (*self.flink).containing_record())
+        (!self.is_empty()).then(|| NtListEntry::containing_record(self.flink))
     }
 
     /// Provides a mutable reference to the first element, or `None` if the list is empty.
     ///
     /// This operation computes in *O*(*1*) time.
     pub unsafe fn front_mut(self: Pin<&mut Self>) -> Option<&mut E> {
-        (!self.as_ref().is_empty()).then(|| (*self.flink).containing_record_mut())
+        (!self.as_ref().is_empty()).then(|| NtListEntry::containing_record_mut(self.flink))
     }
 
     /// Returns `true` if the list is empty.
@@ -183,9 +183,9 @@ where
     /// [`RemoveTailList`]: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-removetaillist
     pub unsafe fn pop_back(self: Pin<&mut Self>) -> Option<&mut E> {
         (!self.as_ref().is_empty()).then(|| {
-            let entry = &mut *self.blink;
-            entry.remove();
-            entry.containing_record_mut()
+            let entry = self.blink;
+            (*entry).remove();
+            NtListEntry::containing_record_mut(entry)
         })
     }
 
@@ -198,9 +198,9 @@ where
     /// [`RemoveHeadList`]: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-removeheadlist
     pub unsafe fn pop_front(self: Pin<&mut Self>) -> Option<&mut E> {
         (!self.as_ref().is_empty()).then(|| {
-            let entry = &mut *self.flink;
-            entry.remove();
-            entry.containing_record_mut()
+            let entry = self.flink;
+            (*entry).remove();
+            NtListEntry::containing_record_mut(entry)
         })
     }
 
@@ -296,7 +296,7 @@ where
             None
         } else {
             unsafe {
-                let element = (*self.flink).containing_record();
+                let element = NtListEntry::containing_record(self.flink);
 
                 if self.flink == self.blink {
                     // We are crossing the other end of the iterator and must not iterate any further.
@@ -325,7 +325,7 @@ where
             None
         } else {
             unsafe {
-                let element = (*self.blink).containing_record();
+                let element = NtListEntry::containing_record(self.blink);
 
                 if self.blink == self.flink {
                     // We are crossing the other end of the iterator and must not iterate any further.
@@ -381,7 +381,7 @@ where
             None
         } else {
             unsafe {
-                let element = (*self.flink).containing_record_mut();
+                let element = NtListEntry::containing_record_mut(self.flink);
 
                 if self.flink == self.blink {
                     // We are crossing the other end of the iterator and must not iterate any further.
@@ -410,7 +410,7 @@ where
             None
         } else {
             unsafe {
-                let element = (*self.blink).containing_record_mut();
+                let element = NtListEntry::containing_record_mut(self.blink);
 
                 if self.blink == self.flink {
                     // We are crossing the other end of the iterator and must not iterate any further.
@@ -457,17 +457,22 @@ where
         }
     }
 
-    pub(crate) fn containing_record(&self) -> &E {
-        unsafe { &*self.element_ptr() }
+    pub(crate) unsafe fn containing_record<'a>(ptr: *const Self) -> &'a E {
+        &*Self::element_ptr(ptr)
     }
 
-    pub(crate) fn containing_record_mut(&mut self) -> &mut E {
-        unsafe { &mut *(self.element_ptr() as *mut E) }
+    pub(crate) unsafe fn containing_record_mut<'a>(ptr: *mut Self) -> &'a mut E {
+        &mut *Self::element_ptr_mut(ptr)
     }
 
-    fn element_ptr(&self) -> *const E {
-        let ptr = self as *const Self;
+    fn element_ptr(ptr: *const Self) -> *const E {
+        // This is the canonical implementation of `byte_sub`
+        let ptr = unsafe { ptr.cast::<u8>().sub(E::offset()).cast::<Self>() };
 
+        ptr.cast()
+    }
+
+    fn element_ptr_mut(ptr: *mut Self) -> *mut E {
         // This is the canonical implementation of `byte_sub`
         let ptr = unsafe { ptr.cast::<u8>().sub(E::offset()).cast::<Self>() };
 

@@ -63,7 +63,7 @@ where
         // Traverse the list in the old-fashioned way and deallocate each element.
         while !current.is_null() {
             unsafe {
-                let element = (*current).containing_record_mut();
+                let element = NtSingleListEntry::containing_record_mut(current);
                 current = (*current).next;
                 drop(Box::from_raw(element));
             }
@@ -147,14 +147,18 @@ where
 
         while !current.is_null() {
             unsafe {
-                let element = (*current).containing_record_mut();
+                // Note: The next list entry can be cached soundly as long as
+                // `NtSingleListEntry::{push,pop}_front` are never called on `element`, which are
+                // both unsafe functions.
+                let next = (*current).next;
+                let element = NtSingleListEntry::containing_record_mut(current);
 
                 if f(element) {
                     previous = current;
-                    current = (*current).next;
+                    current = next;
                 } else {
-                    (*previous).next = (*current).next;
-                    current = (*current).next;
+                    (*previous).next = next;
+                    current = next;
                     drop(Box::from_raw(element));
                 }
             }
